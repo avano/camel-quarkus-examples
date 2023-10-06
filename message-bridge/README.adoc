@@ -1,0 +1,115 @@
+= Message Bridge: A Camel Quarkus example
+:cq-example-description: An example that shows how to configure AMQ and IBM MQ clients to use the connection pooling and XA transactions.
+
+{cq-description}
+
+TIP: Check the https://camel.apache.org/camel-quarkus/latest/first-steps.html[Camel Quarkus User guide] for prerequisites
+and other general information.
+
+== Overview
+
+In this example, a basic REST endpoint is provided for users to dispatch a message to the IBM MQ queue. Subsequently, all messages from the IBM MQ are relayed to an ActiveMQ queue within an XA transaction. To showcase the transaction functionality, a message containing the keyword "rollback" will initiate a transaction rollback.
+
+Details regarding client configurations can be located in the link:src/main/resources/application.properties file.
+
+== Prerequisites
+
+First start the ActiveMQ broker:
+----
+docker run \
+  -d \
+  -e AMQ_USER=admin \
+  -e AMQ_PASSWORD=admin \
+  -p 61616:61616 \
+  quay.io/artemiscloud/activemq-artemis-broker
+----
+
+Then start the IBM MQ broker:
+----
+docker run \
+  -d \
+  -e LICENSE=accept \
+  -e MQ_QMGR_NAME=QM1 \
+  -e MQ_APP_PASSWORD=passw0rd \
+  -p 1414:1414 \
+  icr.io/ibm-messaging/mq:9.3.2.1-r1
+----
+
+== Start in the Development mode
+
+[source,shell]
+----
+$ mvn clean compile quarkus:dev
+----
+
+The above command compiles the project, starts the application and lets the Quarkus tooling watch for changes in your
+workspace. Any modifications in your project will automatically take effect in the running application.
+
+TIP: Please refer to the Development mode section of
+https://camel.apache.org/camel-quarkus/latest/first-steps.html#_development_mode[Camel Quarkus User guide] for more details.
+
+After the application is started, you can send messages to the IBMMQ queue using the rest endpoint `/message`:
+
+----
+curl -X POST -H "Content-Type: text/plain" http://localhost:8080/message -d 'Hello World'
+----
+
+In the application logs you will see:
+
+----
+2023-10-11 08:10:52,782 INFO  [ibmmq] (executor-thread-1) Sending message to IBMMQ: Hello World
+2023-10-11 08:10:52,903 INFO  [ibmmq-amq] (Camel (camel-4) thread #7 - JmsConsumer[DEV.QUEUE.1]) Sending message from IBMMQ to ActiveMQ: Hello World
+2023-10-11 08:10:52,927 INFO  [amq] (Camel (camel-4) thread #8 - JmsConsumer[in]) ActiveMQ received: Hello World
+----
+
+The message is initially dispatched to an IBMMQ queue, then relayed to an ActiveMQ queue, and ultimately retrieved from the ActiveMQ queue and printed to the log without any issues.
+
+If you wish to illustrate a rollback, simply send a message containing the `rollback` keyword.
+
+----
+curl -X POST -H "Content-Type: text/plain" http://localhost:8080/message -d 'Hello rollback'
+----
+The log could be divided into two segments. In this demonstration, the IBMMQ to ActiveMQ route is configured to simulate a transaction rollback following the dispatch of a message to the ActiveMQ queue. Due to the rollback, you'll notice that the message isn't fetched from the ActiveMQ queue and isn't logged:
+
+----
+2023-10-11 08:12:46,314 INFO  [ibmmq] (executor-thread-1) Sending message to IBMMQ: Hello rollback
+2023-10-11 08:12:46,453 INFO  [ibmmq-amq] (Camel (camel-4) thread #7 - JmsConsumer[DEV.QUEUE.1]) Sending message from IBMMQ to ActiveMQ: Hello rollback
+2023-10-11 08:12:46,457 WARN  [org.apa.cam.jta.TransactionErrorHandler] (Camel (camel-4) thread #7 - JmsConsumer[DEV.QUEUE.1]) Transaction rollback (0xea2b886) redelivered(false) for (MessageId: ID:414d5120514d312020202020202020206437266503e30040 on ExchangeId: 01C264F444F3A96-0000000000000003) caught: Simulated rollback
+2023-10-11 08:12:46,458 ERROR [org.apa.cam.jta.TransactionErrorHandler] (Camel (camel-4) thread #7 - JmsConsumer[DEV.QUEUE.1]) Failed delivery for (MessageId: ID:414d5120514d312020202020202020206437266503e30040 on ExchangeId: 01C264F444F3A96-0000000000000003). Exhausted after delivery attempt: 1 caught: java.lang.RuntimeException: Simulated rollback
+...
+<truncated exception from the simulated rollback>
+----
+
+Because the transaction was rolled back, the message wasn't successfully processed and it is returned to the IBMMQ queue and subsequently redelivered. In this instance, the delivery is successful and logged accordingly:
+
+----
+2023-10-11 08:12:46,561 INFO  [ibmmq-amq] (Camel (camel-4) thread #7 - JmsConsumer[DEV.QUEUE.1]) Redelivering message after rollback to ActiveMQ: Hello rollback
+2023-10-11 08:12:46,567 INFO  [org.apa.cam.jta.TransactionErrorHandler] (Camel (camel-4) thread #7 - JmsConsumer[DEV.QUEUE.1]) Transaction commit (0xea2b886) redelivered(true) for (MessageId: ID:414d5120514d312020202020202020206437266503e30040 on ExchangeId: 01C264F444F3A96-0000000000000004))
+2023-10-11 08:12:46,585 INFO  [amq] (Camel (camel-4) thread #8 - JmsConsumer[in]) ActiveMQ received: Hello rollback
+----
+
+=== Package and run the application
+
+Once you are done with developing you may want to package and run the application.
+
+TIP: Find more details about the JVM mode and Native mode in the Package and run section of
+https://camel.apache.org/camel-quarkus/latest/first-steps.html#_package_and_run_the_application[Camel Quarkus User guide]
+
+==== JVM mode
+
+[source,shell]
+----
+$ mvn clean package
+$ java -jar target/quarkus-app/quarkus-run.jar
+...
+[io.quarkus] (main) camel-quarkus-examples-... started in 1.163s.
+----
+
+== Feedback
+
+Please report bugs and propose improvements via https://github.com/apache/camel-quarkus/issues[GitHub issues of Camel Quarkus] project.
+
+
+oc new-app quay.io/artemiscloud/activemq-artemis-broker -e AMQ_USER=admin -e AMQ_PASSWORD=admin
+oc patch service/activemq-artemis-broker -p '{"spec":{"ports":[{"name":"61616-tcp", "port": 61616, "protocol": "TCP", "targetPort": 61616}]}}'
+oc new-app icr.io/ibm-messaging/mq:9.3.2.1-r1 -e MQ_QMGR_NAME=QM1 -e LICENSE=accept -e MQ_APP_PASSWORD=passw0rd

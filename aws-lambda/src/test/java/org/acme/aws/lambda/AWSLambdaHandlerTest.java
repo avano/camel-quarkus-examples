@@ -38,7 +38,7 @@ public class AWSLambdaHandlerTest {
                 .when()
                 .post()
                 .then()
-                .statusCode(200)
+                .statusCode(204)
                 .body(is("\"Hello Stu ! How are you? from GreetService\""));
     }
 }
